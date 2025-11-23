@@ -48,9 +48,9 @@ public class MessageHandler(IMasterClient masterClient, IWorkerTask workerTask)
 		}
 
 		_workerTask.SetData(startRow, rowCount, matrixSize, localMatrix, localB);
-
+		Console.WriteLine($"[MessageHandler] Задача принята. Диапазон строк: [{startRow} - {startRow + rowCount - 1}].");
 		await _masterClient.SendMessageAsync(CommandCodes.TaskAccepted, []);
-		Console.WriteLine("Worker: Подтверждение TaskAccepted отправлено.");
+		Console.WriteLine("[MessageHandler] Подтверждение TaskAccepted отправлено.");
 	}
 
 	private async Task HandleIterationVectorAsync(byte[] payload)

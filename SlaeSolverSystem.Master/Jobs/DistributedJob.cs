@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using SlaeSolverSystem.Common;
 using SlaeSolverSystem.Master.Network;
 using SlaeSolverSystem.Master.Pools;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace SlaeSolverSystem.Master.Jobs;
 
@@ -27,15 +28,19 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 
 			// --- ЭТАП 1: ЧТЕНИЕ ДАННЫХ ---
 			var workerIps = (await File.ReadAllLinesAsync(_nodesFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+			await _notifier.SendLogAsync($"Распределенный тест: Чтение файла узлов: '{_nodesFile}'. Найдено {workerIps.Count} адресов.");
+			
 			var bLines = (await File.ReadAllLinesAsync(_vectorFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
 			var b = bLines.Select(l => double.Parse(l.Trim(), CultureInfo.InvariantCulture)).ToArray();
 			var matrixLines = (await File.ReadAllLinesAsync(_matrixFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
 			int size = b.Length;
+			await _notifier.SendLogAsync($"Распределенный тест: Данные для матрицы {size}x{size} успешно прочитаны.");
+
 			if (matrixLines.Length != size) throw new InvalidDataException("Размеры матрицы и вектора не совпадают.");
 			var A = new double[size, size];
 			for (int i = 0; i < size; i++)
 			{
-				var rowElements = matrixLines[i].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+				var rowElements = matrixLines[i].Split([' '], StringSplitOptions.RemoveEmptyEntries);
 				for (int j = 0; j < size; j++) A[i, j] = double.Parse(rowElements[j], CultureInfo.InvariantCulture);
 			}
 
@@ -45,7 +50,7 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 
 			using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 			activeWorkers = await _workerPool.GetWorkersAsync(workerIps.Count, cts.Token);
-			await _notifier.SendLogAsync("Распределенный тест: Все Worker'ы получены.");
+			await _notifier.SendLogAsync($"Распределенный тест: {activeWorkers.Count} воркеров успешно зарезервировано в пуле.");
 
 			// --- ЭТАП 3: РАСПРЕДЕЛЕНИЕ ЗАДАЧ ---
 			await _notifier.SendLogAsync("Этап 3: Распределение задач по Worker'ам...");
@@ -72,6 +77,7 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 			double[] x = new double[size];
 			double[] x_old = new double[size];
 			int iteration = 0;
+			await _notifier.SendLogAsync($"Итерационный процесс начат. Epsilon={_epsilon}, MaxIter={_maxIterations}.");
 
 			while (iteration < _maxIterations)
 			{
@@ -104,6 +110,8 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 					await _notifier.NotifyDistributedResultAsync(stopwatch.ElapsedMilliseconds, iteration + 1, x, size);
 					break;
 				}
+				
+				await _notifier.SendLogAsync($"Итерационный процесс завершен. Финальная ошибка: {error:E5}.");
 				iteration++;
 			}
 
@@ -124,10 +132,10 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 		}
 		finally
 		{
-			if (activeWorkers.Any())
+			if (activeWorkers.Count != 0)
 			{
 				_workerPool.ReturnWorkers(activeWorkers);
-				await _notifier.SendLogAsync("Worker'ы возвращены в пул.");
+				await _notifier.SendLogAsync($"Worker'ы ({activeWorkers.Count} шт.) возвращены в пул. Доступно: {_workerPool.AvailableCount}.");
 			}
 		}
 	}

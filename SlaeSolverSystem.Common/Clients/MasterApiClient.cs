@@ -9,38 +9,44 @@ public class MasterApiClient
 	private NetworkStream _stream;
 	private readonly string _masterIp;
 	private readonly int _masterPort;
-	private Task _listenerTask; 
-
+	private Task _listenerTask;
+	private TaskCompletionSource<bool> _poolStateTcs;
 	public bool IsConnected => _client?.Connected == true;
 
 	public event Action<string> LogReceived;
-	public event Action<int, double> ProgressReceived;
 	public event Action<string> StatusReceived;
+	public event Action<int, double> ProgressReceived;
 	public event Action<CalculationResult> CalculationFinished;
-	public event Action Disconnected;
 	public event Action<long, int> LinearCalculationFinished;
 	public event Action CalculationFailed;
+	public event Action Disconnected;
+	public event Action<int, int> PoolStateReceived;
 
 	public MasterApiClient(string masterIp, int masterPort)
 	{
 		_masterIp = masterIp;
 		_masterPort = masterPort;
+
+		PoolStateReceived += (available, total) => {
+			_poolStateTcs?.TrySetResult(true);
+		};
 	}
 
 	public async Task ConnectAsync()
 	{
-		if (IsConnected && _listenerTask != null && !_listenerTask.IsCompleted)
+		try
 		{
-			return; 
+			if (IsConnected && _listenerTask != null && !_listenerTask.IsCompleted) return;
+			Disconnect();
+			_client = new TcpClient();
+			await _client.ConnectAsync(_masterIp, _masterPort);
+			_stream = _client.GetStream();
+			_listenerTask = Task.Run(ListenForMessagesAsync);
 		}
+		catch (Exception ex)
+		{
 
-		Disconnect();
-
-		_client = new TcpClient();
-		await _client.ConnectAsync(_masterIp, _masterPort);
-		_stream = _client.GetStream();
-
-		_listenerTask = Task.Run(ListenForMessagesAsync);
+		}
 	}
 
 	public void Disconnect()
@@ -49,7 +55,17 @@ public class MasterApiClient
 		_client?.Close();
 	}
 
-	public Task StartLinearCalculationAsync(string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
+	public async Task RequestPoolStateAsync()
+	{
+		if (!IsConnected) throw new InvalidOperationException("Клиент не подключен.");
+
+		_poolStateTcs = new TaskCompletionSource<bool>();
+		await NetworkHelper.SendMessageAsync(_stream, CommandCodes.RequestPoolState, []);
+
+		await Task.WhenAny(_poolStateTcs.Task, Task.Delay(2000));
+	}
+
+	public Task StartCalculationAsync(byte commandCode, string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
 	{
 		if (!IsConnected) throw new InvalidOperationException("Клиент не подключен к Master-серверу.");
 
@@ -63,7 +79,7 @@ public class MasterApiClient
 		writer.Write(maxIterations);
 
 		byte[] payload = ms.ToArray();
-		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.StartLinearCalculation, payload);
+		return NetworkHelper.SendMessageAsync(_stream, commandCode, payload);
 	}
 
 	public Task StartDistributedCalculationAsync(string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
@@ -95,9 +111,11 @@ public class MasterApiClient
 					case CommandCodes.LogMessage:
 						LogReceived?.Invoke(NetworkHelper.ToString(payload));
 						break;
+
 					case CommandCodes.StatusUpdate:
 						StatusReceived?.Invoke(NetworkHelper.ToString(payload));
 						break;
+
 					case CommandCodes.ProgressUpdate:
 						using (var reader = new BinaryReader(new MemoryStream(payload)))
 						{
@@ -106,6 +124,7 @@ public class MasterApiClient
 							ProgressReceived?.Invoke(iter, error);
 						}
 						break;
+
 					case CommandCodes.ResultReady:
 						using (var reader = new BinaryReader(new MemoryStream(payload)))
 						{
@@ -122,6 +141,7 @@ public class MasterApiClient
 							CalculationFinished?.Invoke(result);
 						}
 						break;
+
 					case CommandCodes.LinearResultReady:
 						using (var reader = new BinaryReader(new MemoryStream(payload)))
 						{
@@ -135,10 +155,23 @@ public class MasterApiClient
 					case CommandCodes.CalculationFailed:
 						CalculationFailed?.Invoke();
 						break;
+
+					case CommandCodes.PoolStateUpdate:
+						using (var reader = new BinaryReader(new MemoryStream(payload)))
+						{
+							PoolStateReceived?.Invoke(reader.ReadInt32(), reader.ReadInt32());
+						}
+						break;
 				}
 			}
 		}
-		catch (Exception) { }
-		finally { Disconnected?.Invoke(); }
+		catch (Exception) 
+		{ 
+			
+		}
+		finally 
+		{ 
+			Disconnected?.Invoke(); 
+		}
 	}
 }

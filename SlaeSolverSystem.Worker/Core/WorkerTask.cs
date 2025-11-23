@@ -25,15 +25,13 @@ public class WorkerTask : IWorkerTask
 
 	public double[] CalculatePart(double[] fullX)
 	{
-		if (!IsSet)
-			throw new InvalidOperationException("Задача не установлена. Невозможно выполнить вычисления.");
-
+		if (!IsSet) throw new InvalidOperationException("Задача не установлена.");
 		var result = new double[_rowCount];
-		for (int i = 0; i < _rowCount; i++)
+
+		Parallel.For(0, _rowCount, i =>
 		{
 			double sum = 0;
 			int globalRowIndex = _startRow + i;
-
 			for (int j = 0; j < _matrixSize; j++)
 			{
 				if (j != globalRowIndex)
@@ -41,23 +39,19 @@ public class WorkerTask : IWorkerTask
 					sum += _localMatrix[i, j] * fullX[j];
 				}
 			}
+			result[i] = (Math.Abs(_localMatrix[i, globalRowIndex]) < 1e-12)
+						? 0
+						: (_localB[i] - sum) / _localMatrix[i, globalRowIndex];
+		});
 
-			if (Math.Abs(_localMatrix[i, globalRowIndex]) < 1e-12)
-				result[i] = 0;
-			else
-				result[i] = (_localB[i] - sum) / _localMatrix[i, globalRowIndex];
-		}
 		return result;
 	}
 
 	public void Reset()
 	{
-		_startRow = 0;
-		_rowCount = 0;
-		_matrixSize = 0;
+		IsSet = false;
 		_localMatrix = null;
 		_localB = null;
-		IsSet = false;
-		Console.WriteLine("WorkerTask: Состояние сброшено.");
+		Console.WriteLine("[WorkerTask] Состояние сброшено.");
 	}
 }

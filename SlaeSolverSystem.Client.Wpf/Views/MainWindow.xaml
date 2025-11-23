@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:mah="http://metro.mahapps.com/winfx/xaml/controls"
         xmlns:local="clr-namespace:SlaeSolverSystem.Client.Wpf"
+        mah:DialogParticipation.Register="{Binding}"
         xmlns:vm="clr-namespace:SlaeSolverSystem.Client.Wpf.ViewModels"
         xmlns:converters="clr-namespace:SlaeSolverSystem.Client.Wpf.Converters"
         mc:Ignorable="d"
@@ -102,12 +103,21 @@
                                                    Interval="100" Minimum="1"/>
                             </StackPanel>
                         </GroupBox>
-
+                            
                         <Button FontSize="18" Content="ЗАПУСК (Распределенный)" Command="{Binding StartDistributedTestCommand}" Margin="0,20,0,0" Height="40" IsEnabled="{Binding IsNotRunning}" mah:ControlsHelper.ContentCharacterCasing="Upper" Background="#FF0767B3"/>
                     </StackPanel>
 
                     <!-- Правая колонка: Мониторинг и Результат -->
                     <StackPanel Grid.Column="1">
+                        <GroupBox Header="Состояние Worker'ов" Style="{StaticResource MahApps.Styles.GroupBox}" Margin="0,0,0,15">
+                            <TextBlock FontSize="14" HorizontalAlignment="Center">
+                                <Run Text="Доступно: "/>
+                                <Run Text="{Binding AvailableWorkers, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource MahApps.Brushes.Accent}"/>
+                                <Run Text=" из "/>
+                                <Run Text="{Binding TotalWorkers, Mode=OneWay}" FontWeight="Bold"/>
+                            </TextBlock>
+                        </GroupBox>
+                        
                         <GroupBox Header="Мониторинг" Style="{StaticResource MahApps.Styles.GroupBox}">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -153,11 +163,15 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,15">
-                        <Button FontSize="14" Content="метод Гаусса" Command="{Binding StartLinearTestCommand}" Padding="10,5" IsEnabled="{Binding IsNotRunning}" mah:ControlsHelper.ContentCharacterCasing="Upper"/>
-                        <Button FontSize="14" Content="метод Гаусса-Зейделя" Command="{Binding StartDistributedTestCommand}" Margin="10,0,0,0" Padding="10,5" IsEnabled="{Binding IsNotRunning}" Style="{StaticResource MahApps.Styles.Button.Square.Accent}" mah:ControlsHelper.ContentCharacterCasing="Upper"/>
-                        <Button FontSize="14" Content="Очистить таблицу" Command="{Binding ClearResultsCommand}" Margin="20,0,0,0" Padding="10,5" IsEnabled="{Binding IsNotRunning}" mah:ControlsHelper.ContentCharacterCasing="Upper"/>
-                    </StackPanel>
+                    <WrapPanel Grid.Row="0" Margin="0,0,0,15">
+                        <Button Content="Гаусс (линейный)" Command="{Binding StartGaussLinearCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                        <Button Content="Г-З (1-поток)" Command="{Binding StartSeidelLinearCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                        <Button Content="Г-З (ThreadPool)" Command="{Binding StartSeidelMultiThreadPoolCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                        <Button Content="Г-З (Threads)" Command="{Binding StartSeidelMultiThreadNoPoolCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                        <Button Content="Г-З (Async)" Command="{Binding StartSeidelMultiThreadAsyncCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                        <Button Content="Распределенный" Command="{Binding StartDistributedTestCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5" />
+                        <Button Content="Очистить" Command="{Binding ClearResultsCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
+                    </WrapPanel>
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding TestResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" FontSize="14" Style="{StaticResource MahApps.Styles.DataGrid.Azure}">
                         <DataGrid.Columns>

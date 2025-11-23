@@ -66,4 +66,16 @@ public class GuiNotifier
 		if (!_guiClient.Connected) return Task.CompletedTask;
 		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.CalculationFailed, []);
 	}
+
+	public Task SendPoolStateAsync(int availableCount, int totalCount)
+	{
+		if (!_guiClient.Connected) return Task.CompletedTask;
+
+		using var ms = new MemoryStream();
+		using var writer = new BinaryWriter(ms);
+		writer.Write(availableCount);
+		writer.Write(totalCount);
+
+		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.PoolStateUpdate, ms.ToArray());
+	}
 }

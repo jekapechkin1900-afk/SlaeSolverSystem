@@ -29,6 +29,8 @@ public class LinearJob(GuiNotifier notifier, string matrixFile, string vectorFil
 			int size = b.Length;
 			if (matrixLines.Length != size) throw new InvalidDataException($"Размеры матрицы ({matrixLines.Length}) и вектора ({size}) не совпадают.");
 
+			await _notifier.SendLogAsync($"Линейный тест: Чтение файла матрицы '{_matrixFile}' и вектора '{_vectorFile}'.");
+
 			var A = new double[size, size];
 			for (int i = 0; i < size; i++)
 			{
@@ -44,6 +46,7 @@ public class LinearJob(GuiNotifier notifier, string matrixFile, string vectorFil
 			await _notifier.SendLogAsync($"Линейный тест: Данные для матрицы {size}x{size} успешно прочитаны.");
 
 			await _notifier.SendStatusAsync("Вычисление (метод Гаусса)");
+			await _notifier.SendLogAsync($"Линейный тест: Начало вычислений методом Гаусса...");
 			var result = await LinearSlaeSolver.SolveAsync(A, b);
 
 			await _notifier.SendLogAsync($"Линейный тест: Вычисления завершены за {result.ElapsedMilliseconds} мс.");

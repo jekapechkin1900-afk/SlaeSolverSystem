@@ -1,5 +1,6 @@
 ﻿using System.Net.Sockets;
 using SlaeSolverSystem.Common;
+using SlaeSolverSystem.Master.Enums;
 using SlaeSolverSystem.Master.Jobs;
 using SlaeSolverSystem.Master.Network;
 
@@ -54,27 +55,44 @@ public class GuiCommandHandler
 	{
 		try
 		{
+			if (command == CommandCodes.RequestPoolState)
+			{
+				await _notifier.SendPoolStateAsync(_jobManager.WorkerPool.AvailableCount, _jobManager.WorkerPool.TotalCount);
+				return; 
+			}
+
+			var p = ParseStartParameters(payload);
+			IJob job = null;
+
 			switch (command)
 			{
-				case CommandCodes.StartLinearCalculation:
-					{
-						var p = ParseStartParameters(payload);
-						var job = new LinearJob(_notifier, p.matrixFile, p.vectorFile);
-						_jobManager.EnqueueJob(job);
-						await _notifier.SendLogAsync("Задание для линейного теста (метод Гаусса) добавлено в очередь.");
-						break;
-					}
+				case CommandCodes.StartGaussLinear:
+					job = new LinearJob(_notifier, p.matrixFile, p.vectorFile);
+					break;
+				case CommandCodes.StartSeidelLinear:
+					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.SingleThread);
+					break;
+				case CommandCodes.StartSeidelMultiThreadNoPool:
+					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadWithoutPool);
+					break;
+				case CommandCodes.StartSeidelMultiThreadPool:
+					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadWithPool);
+					break;
+				case CommandCodes.StartSeidelMultiThreadAsync:
+					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadAsync);
+					break;
 				case CommandCodes.StartDistributedCalculation:
-					{
-						var p = ParseStartParameters(payload);
-						var job = new DistributedJob(_notifier, _jobManager.WorkerPool, p.matrixFile, p.vectorFile, p.nodesFile, p.epsilon, p.maxIterations);
-						_jobManager.EnqueueJob(job);
-						await _notifier.SendLogAsync("Задание для распределенного теста добавлено в очередь.");
-						break;
-					}
+					job = new DistributedJob(_notifier, _jobManager.WorkerPool, p.matrixFile, p.vectorFile, p.nodesFile, p.epsilon, p.maxIterations);
+					break;
 				default:
 					await _notifier.SendLogAsync($"Получена неизвестная команда: 0x{command:X2}");
 					break;
+			}
+
+			if (job != null)
+			{
+				_jobManager.EnqueueJob(job);
+				await _notifier.SendLogAsync($"Задание '{job.GetType().Name}' (режим: {GetJobModeName(command)}) добавлено в очередь.");
 			}
 		}
 		catch (Exception ex)
@@ -83,6 +101,17 @@ public class GuiCommandHandler
 			await _notifier.NotifyCalculationFailedAsync();
 		}
 	}
+
+	private string GetJobModeName(byte command) => command switch
+	{
+		CommandCodes.StartGaussLinear => "Гаусс (линейный)",
+		CommandCodes.StartSeidelLinear => "Г-З (1-поток)",
+		CommandCodes.StartSeidelMultiThreadNoPool => "Г-З (Threads)",
+		CommandCodes.StartSeidelMultiThreadPool => "Г-З (ThreadPool)",
+		CommandCodes.StartSeidelMultiThreadAsync => "Г-З (Async)",
+		CommandCodes.StartDistributedCalculation => "Распределенный",
+		_ => "Неизвестный"
+	};
 
 	private (string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations) ParseStartParameters(byte[] payload)
 	{

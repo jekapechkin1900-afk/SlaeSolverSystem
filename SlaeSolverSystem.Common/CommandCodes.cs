@@ -13,9 +13,13 @@ public static class CommandCodes
 	public const byte WorkerError = 0xFE;
 
 	// GUI Client -> Master
-	public const byte StartDistributedCalculation = 0x21; 
-	public const byte StartLinearCalculation = 0x23;      
-	public const byte StopCalculation = 0x22;
+	public const byte StartGaussLinear = 0x21; // Прямой метод Гаусса (однопоточный)
+	public const byte StartSeidelLinear = 0x22; // Гаусс-Зейдель (однопоточный)
+	public const byte StartSeidelMultiThreadNoPool = 0x23; // Гаусс-Зейдель (многопоточный, без пула)
+	public const byte StartSeidelMultiThreadPool = 0x24; // Гаусс-Зейдель (многопоточный, с пулом)
+	public const byte StartSeidelMultiThreadAsync = 0x25; // Гаусс-Зейдель (асинхронный)
+	public const byte StartDistributedCalculation = 0x26; // Распределенный
+	public const byte RequestPoolState = 0x2F;
 
 	// Master -> GUI Client
 	public const byte StatusUpdate = 0x31;
@@ -24,5 +28,6 @@ public static class CommandCodes
 	public const byte ResultReady = 0x34;
 	public const byte LogMessage = 0x35;
 	public const byte LinearResultReady = 0x36;
+	public const byte PoolStateUpdate = 0x37;
 	public const byte CalculationFailed = 0x3F;
 }
