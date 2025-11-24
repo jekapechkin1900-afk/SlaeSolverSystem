@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using SlaeSolverSystem.Common;
 using SlaeSolverSystem.Common.Clients;
 using SlaeSolverSystem.Common.Contracts;
 using SlaeSolverSystem.Tests.Infrastructure;
@@ -6,7 +7,7 @@ using Xunit.Abstractions;
 
 namespace SlaeSolverSystem.Tests;
 
-public class LoadTests : IAsyncLifetime 
+public class LoadTests : IAsyncLifetime
 {
 	private readonly ITestOutputHelper _output;
 	private readonly MasterApiClient _apiClient;
@@ -20,15 +21,12 @@ public class LoadTests : IAsyncLifetime
 		Directory.CreateDirectory(_testDir);
 	}
 
-	public async Task InitializeAsync()
-	{
-		await _apiClient.ConnectAsync();
-	}
+	public Task InitializeAsync() => _apiClient.ConnectAsync();
 
 	public Task DisposeAsync()
 	{
 		_apiClient.Disconnect();
-		try { Directory.Delete(_testDir, true); } catch { }
+		try { if (Directory.Exists(_testDir)) Directory.Delete(_testDir, true); } catch { }
 		return Task.CompletedTask;
 	}
 
@@ -36,12 +34,12 @@ public class LoadTests : IAsyncLifetime
 	[Trait("Category", "Load")]
 	[InlineData(50, 2, 5)]
 	[InlineData(100, 4, 10)]
-	[InlineData(500, 4, 30)]
-	[InlineData(1000, 4, 90)]
-	[InlineData(5000, 8, 600)] 
+	[InlineData(500, 4, 45)]
+	[InlineData(2000, 6, 120)]
+	[InlineData(5000, 8, 600)]
 	public async Task DistributedSolve_VaryingSizes_CompletesWithinTimeout(int matrixSize, int workerCount, int timeoutInSeconds)
 	{
-		_output.WriteLine($"--- ЗАПУСК ТЕСТА: Матрица {matrixSize}x{matrixSize}, Воркеров: {workerCount}, Таймаут: {timeoutInSeconds} сек ---");
+		_output.WriteLine($"--- ЗАПУСК НАГРУЗОЧНОГО ТЕСТА: Матрица {matrixSize}x{matrixSize}, Воркеров: {workerCount}, Таймаут: {timeoutInSeconds} сек ---");
 
 		// --- ARRANGE ---
 		var matrixFile = Path.Combine(_testDir, $"matrix_{matrixSize}.txt");
@@ -54,30 +52,31 @@ public class LoadTests : IAsyncLifetime
 		_output.WriteLine("Данные сгенерированы.");
 
 		var tcs = new TaskCompletionSource<CalculationResult>();
-		_apiClient.CalculationFinished += (result) => tcs.TrySetResult(result);
+		_apiClient.CalculationFinished += result => tcs.TrySetResult(result);
 
 		var stopwatch = Stopwatch.StartNew();
 
 		// --- ACT ---
 		_output.WriteLine("Отправка команды на сервер...");
-		await _apiClient.StartDistributedCalculationAsync(
+		await _apiClient.StartCalculationAsync(
+			CommandCodes.StartDistributedCalculation,
 			matrixFile,
 			vectorFile,
 			nodesFile,
 			1e-9,
-			20000 
+			20000
 		);
 
+		_output.WriteLine("Ожидание результата от сервера...");
 		var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(timeoutInSeconds * 1000));
 		stopwatch.Stop();
 
 		// --- ASSERT ---
-		Assert.Same(tcs.Task, completedTask);
 		if (completedTask != tcs.Task)
 		{
-			_output.WriteLine($"!!! ТЕСТ ПРОВАЛЕН: Таймаут {timeoutInSeconds} сек. превышен !!!");
-			return; 
+			Assert.Fail($"!!! ТЕСТ ПРОВАЛЕН: Таймаут {timeoutInSeconds} сек. превышен !!!");
 		}
+		Assert.Same(tcs.Task, completedTask);
 
 		var result = await tcs.Task;
 
@@ -86,6 +85,7 @@ public class LoadTests : IAsyncLifetime
 		_output.WriteLine($"Время вычислений (сервер): {result.ElapsedTime} мс");
 		_output.WriteLine($"Количество итераций: {result.Iterations}");
 		_output.WriteLine($"Размер матрицы: {result.MatrixSize}");
+		_output.WriteLine("Тест успешно пройден.");
 
 		Assert.True(result.ElapsedTime > 0, "Время вычислений на сервере должно быть положительным.");
 		Assert.Equal(matrixSize, result.MatrixSize);

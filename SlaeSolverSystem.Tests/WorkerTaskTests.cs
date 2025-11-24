@@ -65,7 +65,7 @@ public class WorkerTaskTests
 		var exception = Assert.Throws<InvalidOperationException>(() =>
 			_workerTask.CalculatePart(x_vector)
 		);
-		Assert.Equal("Задача не установлена. Невозможно выполнить вычисления.", exception.Message);
+		Assert.Equal("Задача не установлена.", exception.Message);
 	}
 
 	#endregion
