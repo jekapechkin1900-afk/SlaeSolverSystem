@@ -205,7 +205,7 @@ public class MainViewModel : BaseViewModel
 				n = 1;
 			}
 
-			string resourceType = IsDistributed ? "Воркеров" : "Потоков";
+			string resourceType = IsDistributed ? "Потоков (Всего на воркерах)" : "Потоков";
 			if (_lastTestName.Contains("1-поток") || _lastTestName.Contains("линейный")) resourceType = "Поток";
 
 			var resultVM = new TestResultViewModel
