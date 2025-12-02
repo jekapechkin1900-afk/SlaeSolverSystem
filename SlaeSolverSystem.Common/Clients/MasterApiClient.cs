@@ -65,13 +65,14 @@ public class MasterApiClient
 		await Task.WhenAny(_poolStateTcs.Task, Task.Delay(2000));
 	}
 
-	public Task StartCalculationAsync(byte commandCode, string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
+	public Task StartCalculationAsync(byte commandCode, bool isDistributed, string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
 	{
 		if (!IsConnected) throw new InvalidOperationException("Клиент не подключен к Master-серверу.");
 
 		using var ms = new MemoryStream();
 		using var writer = new BinaryWriter(ms);
 
+		writer.Write(isDistributed);
 		writer.Write(matrixFile);
 		writer.Write(vectorFile);
 		writer.Write(nodesFile);
@@ -80,23 +81,6 @@ public class MasterApiClient
 
 		byte[] payload = ms.ToArray();
 		return NetworkHelper.SendMessageAsync(_stream, commandCode, payload);
-	}
-
-	public Task StartDistributedCalculationAsync(string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations)
-	{
-		if (!IsConnected) throw new InvalidOperationException("Клиент не подключен к Master-серверу.");
-
-		using var ms = new MemoryStream();
-		using var writer = new BinaryWriter(ms);
-
-		writer.Write(matrixFile);
-		writer.Write(vectorFile);
-		writer.Write(nodesFile);
-		writer.Write(epsilon);
-		writer.Write(maxIterations);
-
-		byte[] payload = ms.ToArray();
-		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.StartDistributedCalculation, payload);
 	}
 
 	private async Task ListenForMessagesAsync()
@@ -131,13 +115,15 @@ public class MasterApiClient
 							long time = reader.ReadInt64();
 							int iter = reader.ReadInt32();
 							int size = reader.ReadInt32();
+							int resources = reader.ReadInt32();
+
 							int vectorLength = reader.ReadInt32();
 							var vector = new double[vectorLength];
 							for (int i = 0; i < vectorLength; i++)
 							{
 								vector[i] = reader.ReadDouble();
 							}
-							var result = new CalculationResult(time, iter, vector, size);
+							var result = new CalculationResult(time, iter, vector, size, resources);
 							CalculationFinished?.Invoke(result);
 						}
 						break;

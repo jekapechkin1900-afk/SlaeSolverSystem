@@ -1,6 +1,6 @@
 ﻿using System.Net.Sockets;
 using SlaeSolverSystem.Common;
-using SlaeSolverSystem.Master.Enums;
+using SlaeSolverSystem.Common.Enums;
 using SlaeSolverSystem.Master.Jobs;
 using SlaeSolverSystem.Master.Network;
 
@@ -20,12 +20,10 @@ public class GuiCommandHandler
 	public void HandleClient(TcpClient client)
 	{
 		_guiClient?.Close();
-
 		_guiClient = client;
 		_notifier = new GuiNotifier(_guiClient);
 		Console.WriteLine("[GuiCommandHandler] Новый GUI-клиент принят в обработку.");
 		_ = _notifier.SendLogAsync("GUI клиент успешно подключен.");
-
 		Task.Run(ListenForCommandsAsync);
 	}
 
@@ -70,19 +68,18 @@ public class GuiCommandHandler
 					job = new LinearJob(_notifier, p.matrixFile, p.vectorFile);
 					break;
 				case CommandCodes.StartSeidelLinear:
-					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.SingleThread);
-					break;
 				case CommandCodes.StartSeidelMultiThreadNoPool:
-					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadWithoutPool);
-					break;
 				case CommandCodes.StartSeidelMultiThreadPool:
-					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadWithPool);
-					break;
 				case CommandCodes.StartSeidelMultiThreadAsync:
-					job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, SeidelSolveMode.MultiThreadAsync);
-					break;
-				case CommandCodes.StartDistributedCalculation:
-					job = new DistributedJob(_notifier, _jobManager.WorkerPool, p.matrixFile, p.vectorFile, p.nodesFile, p.epsilon, p.maxIterations);
+					var mode = CommandToSeidelMode(command);
+					if (p.isDistributed)
+					{
+						job = new DistributedJob(mode, _notifier, _jobManager.WorkerPool, p.matrixFile, p.vectorFile, p.nodesFile, p.epsilon, p.maxIterations);
+					}
+					else
+					{
+						job = new SeidelJob(_notifier, p.matrixFile, p.vectorFile, p.epsilon, p.maxIterations, mode);
+					}
 					break;
 				default:
 					await _notifier.SendLogAsync($"Получена неизвестная команда: 0x{command:X2}");
@@ -92,7 +89,7 @@ public class GuiCommandHandler
 			if (job != null)
 			{
 				_jobManager.EnqueueJob(job);
-				await _notifier.SendLogAsync($"Задание '{job.GetType().Name}' (режим: {GetJobModeName(command)}) добавлено в очередь.");
+				await _notifier.SendLogAsync($"Задание '{GetJobName(p.isDistributed, command)}' добавлено в очередь.");
 			}
 		}
 		catch (Exception ex)
@@ -102,20 +99,32 @@ public class GuiCommandHandler
 		}
 	}
 
-	private string GetJobModeName(byte command) => command switch
+	private SeidelSolveMode CommandToSeidelMode(byte command) => command switch
 	{
-		CommandCodes.StartGaussLinear => "Гаусс (линейный)",
-		CommandCodes.StartSeidelLinear => "Г-З (1-поток)",
-		CommandCodes.StartSeidelMultiThreadNoPool => "Г-З (Threads)",
-		CommandCodes.StartSeidelMultiThreadPool => "Г-З (ThreadPool)",
-		CommandCodes.StartSeidelMultiThreadAsync => "Г-З (Async)",
-		CommandCodes.StartDistributedCalculation => "Распределенный",
-		_ => "Неизвестный"
+		CommandCodes.StartSeidelLinear => SeidelSolveMode.SingleThread,
+		CommandCodes.StartSeidelMultiThreadPool => SeidelSolveMode.MultiThreadWithPool,
+		CommandCodes.StartSeidelMultiThreadNoPool => SeidelSolveMode.MultiThreadWithoutPool,
+		CommandCodes.StartSeidelMultiThreadAsync => SeidelSolveMode.MultiThreadAsync,
+		_ => throw new ArgumentOutOfRangeException(nameof(command), "Неизвестная команда для метода Гаусса-Зейделя")
 	};
 
-	private (string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations) ParseStartParameters(byte[] payload)
+	private string GetJobName(bool isDistributed, byte command)
+	{
+		if (command == CommandCodes.StartGaussLinear) return "Гаусс (линейный)";
+		string prefix = isDistributed ? "Распределенный " : "Локальный ";
+		return prefix + CommandToSeidelMode(command).ToString();
+	}
+
+	private (string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations, bool isDistributed) ParseStartParameters(byte[] payload)
 	{
 		using var reader = new BinaryReader(new MemoryStream(payload));
-		return (reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadDouble(), reader.ReadInt32());
+		bool isDistributed = reader.ReadBoolean(); 
+		string matrixFile = reader.ReadString();   
+		string vectorFile = reader.ReadString();   
+		string nodesFile = reader.ReadString();    
+		double epsilon = reader.ReadDouble();      
+		int maxIterations = reader.ReadInt32();  
+
+		return (matrixFile, vectorFile, nodesFile, epsilon, maxIterations, isDistributed);
 	}
 }

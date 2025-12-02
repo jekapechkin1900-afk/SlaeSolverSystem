@@ -103,8 +103,32 @@
                                                    Interval="100" Minimum="1"/>
                             </StackPanel>
                         </GroupBox>
-                            
-                        <Button FontSize="18" Content="ЗАПУСК (Распределенный)" Command="{Binding StartDistributedTestCommand}" Margin="0,20,0,0" Height="40" IsEnabled="{Binding IsNotRunning}" mah:ControlsHelper.ContentCharacterCasing="Upper" Background="#FF0767B3"/>
+                        <Grid Margin="0,20,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <!-- Отступ между кнопками -->
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button Grid.Column="0"
+                                Content="РАСПРЕДЕЛЕННЫЙ"
+                                Command="{Binding StartSeidelLinearCommand}"
+                                Height="45"
+                                FontSize="14"
+                                FontWeight="Bold"
+                                Style="{StaticResource MahApps.Styles.Button.Square.Accent}"
+                                mah:ControlsHelper.ContentCharacterCasing="Upper"
+                                IsEnabled="{Binding IsNotRunning}"/>
+
+                            <Button Grid.Column="2"
+                                    Content="ГАУСС (ЛИНЕЙНЫЙ)"
+                                    Command="{Binding StartGaussLinearCommand}"
+                                    Height="45"
+                                    FontSize="14"
+                                    FontWeight="Bold"
+                                    IsEnabled="{Binding IsNotRunning}"/>
+                        </Grid>
                     </StackPanel>
 
                     <!-- Правая колонка: Мониторинг и Результат -->
@@ -164,22 +188,38 @@
                     </Grid.RowDefinitions>
 
                     <WrapPanel Grid.Row="0" Margin="0,0,0,15">
+                        <mah:ToggleSwitch Header="Режим вычислений"
+                              IsOn="{Binding IsDistributed}"
+                              OnContent="Распределенный"
+                              OffContent="Локальный (на сервере)"
+                              Margin="5" VerticalAlignment="Center" IsEnabled="{Binding IsNotRunning}"/>
+
                         <Button Content="Гаусс (линейный)" Command="{Binding StartGaussLinearCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
                         <Button Content="Г-З (1-поток)" Command="{Binding StartSeidelLinearCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
                         <Button Content="Г-З (ThreadPool)" Command="{Binding StartSeidelMultiThreadPoolCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
                         <Button Content="Г-З (Threads)" Command="{Binding StartSeidelMultiThreadNoPoolCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
                         <Button Content="Г-З (Async)" Command="{Binding StartSeidelMultiThreadAsyncCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
-                        <Button Content="Распределенный" Command="{Binding StartDistributedTestCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5" />
                         <Button Content="Очистить" Command="{Binding ClearResultsCommand}" IsEnabled="{Binding IsNotRunning}" Margin="5"/>
                     </WrapPanel>
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding TestResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" FontSize="14" Style="{StaticResource MahApps.Styles.DataGrid.Azure}">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Тип теста" Binding="{Binding TestType}" Width="*"/>
-                            <DataGridTextColumn Header="Размер матрицы" Binding="{Binding MatrixSize}" Width="150"/>
-                            <DataGridTextColumn Header="Итераций" Binding="{Binding Iterations}" Width="100"/>
+                            <DataGridTemplateColumn Header="Ресурсы" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <Run Text="{Binding Resources}"/>
+                                            <Run Text="{Binding ResourceType}" Foreground="Gray" FontSize="10"/>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Время (мс)" Binding="{Binding TimeMs}" Width="120" SortDirection="Ascending"/>
+                            <DataGridTextColumn Header="Итераций" Binding="{Binding Iterations}" Width="100"/>
+                            <DataGridTextColumn Header="Размер матрицы" Binding="{Binding MatrixSize}" Width="150"/>
                             <DataGridTextColumn Header="Ускорение (Speedup)" Binding="{Binding Speedup, StringFormat={}{0:F2}x}" Width="150"/>
+                            <DataGridTextColumn Header="Эффективность" Binding="{Binding Efficiency, StringFormat={}{0:P0}}" Width="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>

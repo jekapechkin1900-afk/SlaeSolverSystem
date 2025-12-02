@@ -1,11 +1,12 @@
 ﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
-using MahApps.Metro.Controls;
 using MahApps.Metro.Controls.Dialogs;
 using Microsoft.Win32;
 using SlaeSolverSystem.Client.Wpf.Commands;
@@ -19,16 +20,16 @@ public class MainViewModel : BaseViewModel
 {
 	private readonly MasterApiClient _apiClient;
 	private readonly DispatcherTimer _timer;
-	private IDialogCoordinator _dialogCoordinator;
+	private readonly IDialogCoordinator _dialogCoordinator; // readonly, так как не меняется
 	private DateTime _startTime;
-	private MetroWindow _mainWindow;
 
-	private long _lastLinearTime;
-	private long _baseTimeForSpeedup;
+	// ЕДИНСТВЕННОЕ поле для хранения базового времени (T1)
+	private long _baseTimeT1;
 	private string _lastTestName;
 
-
 	#region Public Properties for Binding
+
+	public bool IsDistributed { get; set; } = false;
 
 	public ObservableCollection<string> LogMessages { get; } = new ObservableCollection<string>();
 
@@ -39,7 +40,6 @@ public class MainViewModel : BaseViewModel
 		private set { _logText = value; OnPropertyChanged(); }
 	}
 
-
 	private TimeSpan _elapsedTime;
 	public TimeSpan ElapsedTime
 	{
@@ -47,12 +47,11 @@ public class MainViewModel : BaseViewModel
 		private set { _elapsedTime = value; OnPropertyChanged(); }
 	}
 
+	// Свойства путей...
 	private string _matrixFilePath;
 	public string MatrixFilePath { get => _matrixFilePath; set { _matrixFilePath = value; OnPropertyChanged(); } }
-
 	private string _vectorFilePath;
 	public string VectorFilePath { get => _vectorFilePath; set { _vectorFilePath = value; OnPropertyChanged(); } }
-
 	private string _nodesFilePath;
 	public string NodesFilePath { get => _nodesFilePath; set { _nodesFilePath = value; OnPropertyChanged(); } }
 
@@ -92,13 +91,15 @@ public class MainViewModel : BaseViewModel
 
 	private double[] _lastSolutionVector;
 	public bool CanSaveResult => _lastSolutionVector != null && _lastSolutionVector.Length > 0 && !IsRunning;
+
 	public int AvailableWorkers { get; private set; }
 	public int TotalWorkers { get; private set; }
-	public ObservableCollection<TestResultViewModel> TestResults { get; } = [];
+	public ObservableCollection<TestResultViewModel> TestResults { get; } = new();
 
 	#endregion
 
 	#region Commands
+	// ... (команды те же)
 	public ICommand BrowseMatrixCommand { get; }
 	public ICommand BrowseVectorCommand { get; }
 	public ICommand BrowseNodesCommand { get; }
@@ -112,7 +113,7 @@ public class MainViewModel : BaseViewModel
 	public ICommand StartDistributedTestCommand { get; }
 	#endregion
 
-	public MainViewModel(IDialogCoordinator dialogCoordinator = null)
+	public MainViewModel(IDialogCoordinator dialogCoordinator)
 	{
 		_dialogCoordinator = dialogCoordinator;
 		_apiClient = new MasterApiClient("127.0.0.1", 8001);
@@ -129,30 +130,21 @@ public class MainViewModel : BaseViewModel
 		BrowseVectorCommand = new RelayCommand(_ => BrowseFile(path => VectorFilePath = path, nameof(VectorFilePath)), _ => IsNotRunning);
 		BrowseNodesCommand = new RelayCommand(_ => BrowseFile(path => NodesFilePath = path, nameof(NodesFilePath)), _ => IsNotRunning);
 		SaveResultCommand = new RelayCommand(_ => PromptToSaveResult(), _ => CanSaveResult);
-		ClearResultsCommand = new RelayCommand(_ => { TestResults.Clear(); LogMessages.Clear(); _baseTimeForSpeedup = 0; }, _ => IsNotRunning);
+
+		ClearResultsCommand = new RelayCommand(_ => {
+			TestResults.Clear();
+			LogMessages.Clear();
+			_baseTimeT1 = 0; // Сбрасываем базовое время
+		}, _ => IsNotRunning);
 
 		StartGaussLinearCommand = new RelayCommand(async _ => await StartTest("Гаусс (линейный)", CommandCodes.StartGaussLinear), _ => CanStart());
-		StartSeidelLinearCommand = new RelayCommand(async _ => await StartTest("Г-З (1-поток)", CommandCodes.StartSeidelLinear), _ => CanStart());
-		StartSeidelMultiThreadNoPoolCommand = new RelayCommand(async _ => await StartTest("Г-З (Threads)", CommandCodes.StartSeidelMultiThreadNoPool), _ => CanStart());
+		StartSeidelLinearCommand = new RelayCommand(async _ => await StartTest("Г-З (1-поток)", CommandCodes.StartSeidelLinear), _ => CanStart()); // <-- ИМЯ ВАЖНО
 		StartSeidelMultiThreadPoolCommand = new RelayCommand(async _ => await StartTest("Г-З (ThreadPool)", CommandCodes.StartSeidelMultiThreadPool), _ => CanStart());
+		StartSeidelMultiThreadNoPoolCommand = new RelayCommand(async _ => await StartTest("Г-З (Threads)", CommandCodes.StartSeidelMultiThreadNoPool), _ => CanStart());
 		StartSeidelMultiThreadAsyncCommand = new RelayCommand(async _ => await StartTest("Г-З (Async)", CommandCodes.StartSeidelMultiThreadAsync), _ => CanStart());
 		StartDistributedTestCommand = new RelayCommand(async _ => await StartTest("Распределенный", CommandCodes.StartDistributedCalculation), _ => CanStart());
 
 		SubscribeToApiEvents();
-	}
-
-	public void SetWindow(MetroWindow window) => _mainWindow = window;
-
-	private async Task ShowMessageAsync(string title, string message, MessageDialogStyle style = MessageDialogStyle.Affirmative)
-	{
-		if (_dialogCoordinator != null)
-		{
-			await _dialogCoordinator.ShowMessageAsync(this, title, message, style);
-		}
-		else 
-		{
-			MessageBox.Show(message, title);
-		}
 	}
 
 	private void SubscribeToApiEvents()
@@ -174,21 +166,11 @@ public class MainViewModel : BaseViewModel
 
 	#region API Event Handlers
 
-	private void OnLogMessagesChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-	{
-		var sb = new StringBuilder();
-		foreach (var message in LogMessages)
-		{
-			sb.AppendLine(message);
-		}
-		LogText = sb.ToString();
-	}
-
 	private void OnLinearCalculationFinished(long time, int matrixSize)
 	{
 		DispatcherInvoke(() =>
 		{
-			_baseTimeForSpeedup = time;
+			_baseTimeT1 = time;
 
 			var resultVM = new TestResultViewModel
 			{
@@ -196,43 +178,50 @@ public class MainViewModel : BaseViewModel
 				MatrixSize = matrixSize,
 				TimeMs = time,
 				Iterations = 0,
-				Speedup = 1.0
+				Resources = 1,
+				ResourceType = "Поток",
+				Speedup = 1.0,
+				Efficiency = 1.0
 			};
 			AddResultAndFinalize(resultVM);
 		});
 	}
 
-	private void OnCalculationFailed() => DispatcherInvoke(() => FinalizeWithError("Ошибка при выполнении"));
-
-
 	private void OnCalculationFinished(CalculationResult result)
 	{
 		DispatcherInvoke(() =>
 		{
-			if (_lastTestName == "Г-З (1-поток)")
-			{
-				_baseTimeForSpeedup = result.ElapsedTime;
-			}
+			long t1 = _baseTimeT1 > 0 ? _baseTimeT1 : result.ElapsedTime;
+			long tn = result.ElapsedTime;
+			int n = result.UsedResources; 
 
-			double speedup = (_baseTimeForSpeedup > 0)
-							 ? Math.Round((double)_baseTimeForSpeedup / result.ElapsedTime, 2)
-							 : 0;
+			double speedup = (double)t1 / tn; // Sn = T1 / Tn
+			double efficiency = speedup / n;  // En = Sn / n
 
-			if (_lastTestName == "Г-З (1-поток)")
+			if (_lastTestName == "Гаусс (линейный)")
 			{
 				speedup = 1.0;
+				efficiency = 1.0;
+				n = 1;
 			}
+
+			string resourceType = IsDistributed ? "Воркеров" : "Потоков";
+			if (_lastTestName.Contains("1-поток") || _lastTestName.Contains("линейный")) resourceType = "Поток";
 
 			var resultVM = new TestResultViewModel
 			{
-				TestType = _lastTestName,
+				TestType = IsDistributed ? $"Распред. ({_lastTestName})" : _lastTestName,
 				MatrixSize = result.MatrixSize,
 				TimeMs = result.ElapsedTime,
 				Iterations = result.Iterations,
-				Speedup = speedup
+				Resources = n,
+				ResourceType = resourceType,
+				Speedup = Math.Round(speedup, 2),
+				Efficiency = Math.Round(efficiency, 2)
 			};
 			AddResultAndFinalize(resultVM);
 
+			// Обработка вектора решения
 			_lastSolutionVector = result.SolutionVector;
 			var sb = new StringBuilder("Первые 10 элементов вектора x:\n");
 			for (int i = 0; i < Math.Min(result.SolutionVector.Length, 10); i++)
@@ -250,6 +239,8 @@ public class MainViewModel : BaseViewModel
 		IsRunning = false;
 		StatusText = "Завершено";
 	}
+
+	private void OnCalculationFailed() => DispatcherInvoke(() => FinalizeWithError("Ошибка при выполнении"));
 
 	private void OnDisconnected() => DispatcherInvoke(() => {
 		if (IsRunning) FinalizeWithError("Соединение с сервером потеряно");
@@ -274,34 +265,36 @@ public class MainViewModel : BaseViewModel
 
 		_lastTestName = testName;
 
-		await _apiClient.ConnectAsync();
-
-		StatusText = "Запрос состояния Worker'ов...";
-		await _apiClient.RequestPoolStateAsync();
-
-		await Task.Delay(500);
-		var confirmationMessage = $"Запустить '{testName}'?\n\nДоступно Worker'ов в пуле: {AvailableWorkers} из {TotalWorkers}.";
-		var dialogResult = await _dialogCoordinator.ShowMessageAsync(this, "Подтверждение запуска", confirmationMessage, MessageDialogStyle.AffirmativeAndNegative);
-		if (dialogResult != MessageDialogResult.Affirmative) return;
-
-		IsRunning = true;
-		LogMessages.Insert(0, $"--- {DateTime.Now:HH:mm:ss} ---");
-		ResultPreviewText = string.Empty;
-		ResultFilePathOnServer = string.Empty;
-		Iteration = 0;
-		CurrentError = 0;
-		_lastSolutionVector = null;
-		_startTime = DateTime.Now;
-		ElapsedTime = TimeSpan.Zero;
-		_timer.Start();
-		OnPropertyChanged(nameof(CanSaveResult));
-
-		LogMessages.Insert(0, $"Начало теста '{testName}'...");
-		StatusText = "Подключение к Master-серверу...";
-
 		try
 		{
-			await _apiClient.StartCalculationAsync(commandCode, MatrixFilePath, VectorFilePath, NodesFilePath, Epsilon, MaxIterations);
+			await _apiClient.ConnectAsync();
+			await Task.Delay(100);
+			StatusText = "Запрос состояния Worker'ов...";
+			await _apiClient.RequestPoolStateAsync();
+			await Task.Delay(500);
+
+			var confirmationMessage = $"Запустить '{testName}'?\n\nДоступно Worker'ов в пуле: {AvailableWorkers} из {TotalWorkers}.";
+			var dialogResult = await _dialogCoordinator.ShowMessageAsync(this, "Подтверждение запуска", confirmationMessage, MessageDialogStyle.AffirmativeAndNegative);
+			if (dialogResult != MessageDialogResult.Affirmative) return;
+
+			IsRunning = true;
+			LogMessages.Insert(0, $"--- {DateTime.Now:HH:mm:ss} ---");
+			ResultPreviewText = string.Empty;
+			ResultFilePathOnServer = string.Empty;
+			Iteration = 0;
+			CurrentError = 0;
+			_lastSolutionVector = null;
+
+			_startTime = DateTime.Now;
+			ElapsedTime = TimeSpan.Zero;
+			_timer.Start();
+
+			OnPropertyChanged(nameof(CanSaveResult));
+
+			LogMessages.Insert(0, $"Начало теста '{testName}'...");
+			StatusText = "Подключение к Master-серверу...";
+
+			await _apiClient.StartCalculationAsync(commandCode, IsDistributed, MatrixFilePath, VectorFilePath, NodesFilePath, Epsilon, MaxIterations);
 			LogMessages.Insert(0, "Задача отправлена. Ожидание ответа от сервера...");
 		}
 		catch (Exception ex)
@@ -323,11 +316,6 @@ public class MainViewModel : BaseViewModel
 			setPathAction(ofd.FileName);
 			OnPropertyChanged(propertyName);
 		}
-	}
-
-	private void OnTimerTick(object sender, EventArgs e)
-	{
-		ElapsedTime = DateTime.Now - _startTime;
 	}
 
 	private void PromptToSaveResult()

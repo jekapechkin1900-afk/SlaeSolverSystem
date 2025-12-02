@@ -1,7 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using SlaeSolverSystem.Common;
-using SlaeSolverSystem.Master.Enums;
+using SlaeSolverSystem.Common.Enums;
 using SlaeSolverSystem.Master.Network;
 
 namespace SlaeSolverSystem.Master.Jobs;
@@ -85,7 +85,13 @@ public class SeidelJob : IJob
 
 			await _notifier.SendLogAsync($"{_jobName}: Вычисления завершены за {elapsedTime} мс. Итераций: {iteration}.");
 
-			await _notifier.NotifyDistributedResultAsync(elapsedTime, iteration, x, size);
+			int resources = 1;
+			if (_mode != SeidelSolveMode.SingleThread)
+			{
+				resources = Environment.ProcessorCount;
+			}
+
+			await _notifier.NotifyDistributedResultAsync(elapsedTime, iteration, x, size, resources);
 			await _notifier.SendStatusAsync("Готов к работе");
 		}
 		catch (Exception ex)

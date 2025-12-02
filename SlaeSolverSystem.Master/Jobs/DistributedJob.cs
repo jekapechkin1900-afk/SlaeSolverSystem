@@ -1,15 +1,24 @@
-﻿using System.Diagnostics;
-using System.Globalization;
-using System.Net.Sockets;
-using SlaeSolverSystem.Common;
+﻿using SlaeSolverSystem.Common;
+using SlaeSolverSystem.Common.Enums;
 using SlaeSolverSystem.Master.Network;
 using SlaeSolverSystem.Master.Pools;
-using static System.Runtime.InteropServices.JavaScript.JSType;
+using System.Diagnostics;
+using System.Globalization;
+using System.Net.Sockets;
 
 namespace SlaeSolverSystem.Master.Jobs;
 
-public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string matrixFile, string vectorFile, string nodesFile, double epsilon, int maxIterations) : IJob
+public class DistributedJob(
+	SeidelSolveMode solveMode,
+	GuiNotifier notifier,
+	IWorkerPool workerPool,
+	string matrixFile,
+	string vectorFile,
+	string nodesFile,
+	double epsilon,
+	int maxIterations) : IJob
 {
+	private readonly SeidelSolveMode _solveMode = solveMode;
 	private readonly GuiNotifier _notifier = notifier;
 	private readonly IWorkerPool _workerPool = workerPool;
 	private readonly string _matrixFile = matrixFile;
@@ -26,10 +35,9 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 			await _notifier.SendLogAsync("Распределенный тест: Начало выполнения задания.");
 			await _notifier.SendStatusAsync("Чтение файлов");
 
-			// --- ЭТАП 1: ЧТЕНИЕ ДАННЫХ ---
 			var workerIps = (await File.ReadAllLinesAsync(_nodesFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
 			await _notifier.SendLogAsync($"Распределенный тест: Чтение файла узлов: '{_nodesFile}'. Найдено {workerIps.Count} адресов.");
-			
+
 			var bLines = (await File.ReadAllLinesAsync(_vectorFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
 			var b = bLines.Select(l => double.Parse(l.Trim(), CultureInfo.InvariantCulture)).ToArray();
 			var matrixLines = (await File.ReadAllLinesAsync(_matrixFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
@@ -44,7 +52,6 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 				for (int j = 0; j < size; j++) A[i, j] = double.Parse(rowElements[j], CultureInfo.InvariantCulture);
 			}
 
-			// --- ЭТАП 2: ПОЛУЧЕНИЕ WORKER'ОВ ИЗ ПУЛА ---
 			await _notifier.SendLogAsync($"Распределенный тест: Ожидание {workerIps.Count} Worker'ов из пула...");
 			await _notifier.SendStatusAsync("Подключение узлов");
 
@@ -52,7 +59,6 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 			activeWorkers = await _workerPool.GetWorkersAsync(workerIps.Count, cts.Token);
 			await _notifier.SendLogAsync($"Распределенный тест: {activeWorkers.Count} воркеров успешно зарезервировано в пуле.");
 
-			// --- ЭТАП 3: РАСПРЕДЕЛЕНИЕ ЗАДАЧ ---
 			await _notifier.SendLogAsync("Этап 3: Распределение задач по Worker'ам...");
 			await _notifier.SendStatusAsync("Распределение задач");
 
@@ -71,30 +77,44 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 			await Task.WhenAll(distributionTasks);
 			await _notifier.SendLogAsync("Все Worker'ы приняли задачи.");
 
-			// --- ЭТАП 4: ИТЕРАЦИОННЫЙ ПРОЦЕСС ---
 			await _notifier.SendStatusAsync("Вычисление");
 			var stopwatch = Stopwatch.StartNew();
 			double[] x = new double[size];
 			double[] x_old = new double[size];
 			int iteration = 0;
+			bool converged = false;
 			await _notifier.SendLogAsync($"Итерационный процесс начат. Epsilon={_epsilon}, MaxIter={_maxIterations}.");
 
 			while (iteration < _maxIterations)
 			{
 				Array.Copy(x, x_old, size);
+				var vectorPayload = NetworkHelper.ToBytes(x);
+				var fullPayload = new byte[1 + vectorPayload.Length];
+				fullPayload[0] = (byte)_solveMode;
+				Buffer.BlockCopy(vectorPayload, 0, fullPayload, 1, vectorPayload.Length);
 
-				var sendTasks = activeWorkers.Select(w => NetworkHelper.SendMessageAsync(w.GetStream(), CommandCodes.IterationVector, NetworkHelper.ToBytes(x))).ToList();
+				var sendTasks = activeWorkers.Select(w =>
+					NetworkHelper.SendMessageAsync(w.GetStream(), CommandCodes.IterationVector, fullPayload)).ToList();
 				await Task.WhenAll(sendTasks);
 
 				var receiveTasks = activeWorkers.Select(w => NetworkHelper.ReadMessageAsync(w.GetStream())).ToList();
 				var results = await Task.WhenAll(receiveTasks);
 
+				int totalThreadsUsed = 0;
 				currentRow = 0;
 				for (int i = 0; i < activeWorkers.Count; i++)
 				{
 					int rowsForThisWorker = rowsPerWorker + (i < extraRows ? 1 : 0);
 					if (rowsForThisWorker == 0) continue;
-					var partialResult = NetworkHelper.ToDoubleArray(results[i].Payload);
+
+					var payload = results[i].Payload;
+					int workerThreads = BitConverter.ToInt32(payload, 0);
+					totalThreadsUsed += workerThreads;
+
+					var vectorBytes = new byte[payload.Length - 4];
+					Buffer.BlockCopy(payload, 4, vectorBytes, 0, vectorBytes.Length);
+					var partialResult = NetworkHelper.ToDoubleArray(vectorBytes);
+
 					Array.Copy(partialResult, 0, x, currentRow, partialResult.Length);
 					currentRow += rowsForThisWorker;
 				}
@@ -104,21 +124,29 @@ public class DistributedJob(GuiNotifier notifier, IWorkerPool workerPool, string
 
 				if (error < _epsilon)
 				{
+					converged = true;
 					stopwatch.Stop();
 					await _notifier.SendLogAsync($"РЕШЕНИЕ НАЙДЕНО. Сходимость достигнута за {iteration + 1} итераций.");
 					await _notifier.SendLogAsync($"Общее время вычислений: {stopwatch.ElapsedMilliseconds} мс.");
-					await _notifier.NotifyDistributedResultAsync(stopwatch.ElapsedMilliseconds, iteration + 1, x, size);
+					await _notifier.NotifyDistributedResultAsync(stopwatch.ElapsedMilliseconds, iteration + 1, x, size, totalThreadsUsed);
 					break;
 				}
-				
-				await _notifier.SendLogAsync($"Итерационный процесс завершен. Финальная ошибка: {error:E5}.");
+
 				iteration++;
 			}
 
-			if (iteration >= _maxIterations)
+			if (!converged)
+			{
+				stopwatch.Stop();
 				await _notifier.SendLogAsync("ПРЕВЫШЕНО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО ИТЕРАЦИЙ.");
+				await _notifier.SendLogAsync($"Общее время вычислений: {stopwatch.ElapsedMilliseconds} мс.");
 
-			// --- ЭТАП 5: ЗАВЕРШЕНИЕ ---
+				int totalThreads = activeWorkers.Count;
+				if (_solveMode != SeidelSolveMode.SingleThread) totalThreads *= Environment.ProcessorCount;
+
+				await _notifier.NotifyDistributedResultAsync(stopwatch.ElapsedMilliseconds, iteration, x, size, totalThreads);
+			}
+
 			var resetTasks = activeWorkers.Select(w => NetworkHelper.SendMessageAsync(w.GetStream(), CommandCodes.Reset, [])).ToList();
 			await Task.WhenAll(resetTasks);
 			await _notifier.SendStatusAsync("Завершено");

@@ -1,4 +1,4 @@
-﻿namespace SlaeSolverSystem.Master.Enums;
+﻿namespace SlaeSolverSystem.Common.Enums;
 
 public enum SeidelSolveMode
 {

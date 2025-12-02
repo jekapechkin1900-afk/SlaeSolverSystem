@@ -7,4 +7,8 @@ public class TestResultViewModel : BaseViewModel
 	public long TimeMs { get; set; }
 	public int Iterations { get; set; }
 	public double Speedup { get; set; }
+
+	public int Resources { get; set; }
+	public string ResourceType { get; set; } 
+	public double Efficiency { get; set; } 
 }

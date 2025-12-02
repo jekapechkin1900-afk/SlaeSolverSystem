@@ -48,7 +48,7 @@ public class GuiNotifier
 		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.LinearResultReady, ms.ToArray());
 	}
 
-	public Task NotifyDistributedResultAsync(long time, int iterations, double[] solution, int size)
+	public Task NotifyDistributedResultAsync(long time, int iterations, double[] solution, int size, int resources)
 	{
 		if (!_guiClient.Connected) return Task.CompletedTask;
 		using var ms = new MemoryStream();
@@ -56,6 +56,7 @@ public class GuiNotifier
 		writer.Write(time);
 		writer.Write(iterations);
 		writer.Write(size);
+		writer.Write(resources);
 		writer.Write(solution.Length);
 		foreach (var val in solution) writer.Write(val);
 		return NetworkHelper.SendMessageAsync(_stream, CommandCodes.ResultReady, ms.ToArray());

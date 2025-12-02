@@ -1,4 +1,10 @@
-﻿using SlaeSolverSystem.Common;
+﻿using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using SlaeSolverSystem.Common;
+using SlaeSolverSystem.Common.Enums;
 using SlaeSolverSystem.Worker.Interfaces;
 
 namespace SlaeSolverSystem.Worker.Core;
@@ -56,14 +62,53 @@ public class MessageHandler(IMasterClient masterClient, IWorkerTask workerTask)
 	private async Task HandleIterationVectorAsync(byte[] payload)
 	{
 		Console.WriteLine("Worker: Обработка вектора итерации...");
-		var fullX = NetworkHelper.ToDoubleArray(payload);
-		Console.WriteLine($"Worker: Вектор x получен, размер: {fullX.Length}. Начинаю вычисления...");
+		byte mode = payload[0];
+		var vectorPayload = payload.Skip(1).ToArray();
 
-		var partialResult = _workerTask.CalculatePart(fullX);
+		var fullX = NetworkHelper.ToDoubleArray(vectorPayload);
+		Console.WriteLine($"[MessageHandler] Получен вектор x (размер: {fullX.Length}). Режим: {(SeidelSolveMode)mode}.");
 
-		Console.WriteLine($"Worker: Вычисления завершены. Отправляю {partialResult.Length} элементов результата...");
-		await _masterClient.SendMessageAsync(CommandCodes.PartialResult, NetworkHelper.ToBytes(partialResult));
-		Console.WriteLine("Worker: Частичный результат отправлен Master'у.");
+		var stopwatch = Stopwatch.StartNew();
+		double[] partialResult;
+
+		var solveMode = (SeidelSolveMode)mode;
+
+		switch (solveMode)
+		{
+			case SeidelSolveMode.SingleThread:
+				partialResult = _workerTask.CalculatePartSingleThread(fullX);
+				break;
+			case SeidelSolveMode.MultiThreadWithPool:
+				partialResult = _workerTask.CalculatePartMultiThreadWithPool(fullX);
+				break;
+			case SeidelSolveMode.MultiThreadWithoutPool:
+				partialResult = _workerTask.CalculatePartMultiThreadWithoutPool(fullX);
+				break;
+			case SeidelSolveMode.MultiThreadAsync:
+				partialResult = await _workerTask.CalculatePartMultiThreadAsync(fullX);
+				break;
+			default:
+				Console.WriteLine($"[MessageHandler] ОШИБКА: Неизвестный режим: {mode}. Используется SingleThread.");
+				partialResult = _workerTask.CalculatePartSingleThread(fullX);
+				break;
+		}
+
+		stopwatch.Stop();
+
+		int usedThreads = 1;
+		if (solveMode != SeidelSolveMode.SingleThread)
+		{
+			usedThreads = Environment.ProcessorCount;
+		}
+
+		var resultPayload = new byte[4 + partialResult.Length * 8];
+
+		Buffer.BlockCopy(BitConverter.GetBytes(usedThreads), 0, resultPayload, 0, 4);
+		Buffer.BlockCopy(partialResult, 0, resultPayload, 4, partialResult.Length * 8);
+
+		Console.WriteLine($"Worker: Отправляю {partialResult.Length} элементов и info о {usedThreads} потоках...");
+		await _masterClient.SendMessageAsync(CommandCodes.PartialResult, resultPayload);
+		Console.WriteLine("Worker: Результат отправлен.");
 	}
 
 	private void HandleReset()
