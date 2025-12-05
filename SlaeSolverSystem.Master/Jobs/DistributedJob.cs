@@ -35,8 +35,8 @@ public class DistributedJob(
 			await _notifier.SendLogAsync("Распределенный тест: Начало выполнения задания.");
 			await _notifier.SendStatusAsync("Чтение файлов");
 
-			var workerIps = (await File.ReadAllLinesAsync(_nodesFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
-			await _notifier.SendLogAsync($"Распределенный тест: Чтение файла узлов: '{_nodesFile}'. Найдено {workerIps.Count} адресов.");
+			// Читаем nodesFile просто для информации (или чтобы убедиться, что он есть)
+			var workerIpsFromFile = (await File.ReadAllLinesAsync(_nodesFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
 
 			var bLines = (await File.ReadAllLinesAsync(_vectorFile)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
 			var b = bLines.Select(l => double.Parse(l.Trim(), CultureInfo.InvariantCulture)).ToArray();
@@ -52,17 +52,34 @@ public class DistributedJob(
 				for (int j = 0; j < size; j++) A[i, j] = double.Parse(rowElements[j], CultureInfo.InvariantCulture);
 			}
 
-			await _notifier.SendLogAsync($"Распределенный тест: Ожидание {workerIps.Count} Worker'ов из пула...");
+			// --- ЭТАП 2: ПОЛУЧЕНИЕ ВОРКЕРОВ (НОВАЯ ЛОГИКА) ---
+			await _notifier.SendLogAsync($"Распределенный тест: Запрос доступных Worker'ов...");
 			await _notifier.SendStatusAsync("Подключение узлов");
 
-			using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-			activeWorkers = await _workerPool.GetWorkersAsync(workerIps.Count, cts.Token);
-			await _notifier.SendLogAsync($"Распределенный тест: {activeWorkers.Count} воркеров успешно зарезервировано в пуле.");
+			// 1. Берем всех, кто есть прямо сейчас
+			activeWorkers = _workerPool.GetAllAvailableWorkers();
 
+			// 2. Если никого нет, ждем подключения хотя бы одного (таймаут 30 сек)
+			if (activeWorkers.Count == 0)
+			{
+				await _notifier.SendLogAsync("В пуле нет свободных воркеров. Ожидание подключения...");
+				using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+				// Ждем 1 воркера
+				activeWorkers = await _workerPool.GetWorkersAsync(1, cts.Token);
+
+				// Если пока ждали, подключился кто-то еще - забираем и их
+				var extraWorkers = _workerPool.GetAllAvailableWorkers();
+				activeWorkers.AddRange(extraWorkers);
+			}
+
+			await _notifier.SendLogAsync($"Распределенный тест: Будет использовано {activeWorkers.Count} воркеров.");
+
+			// --- ЭТАП 3: РАСПРЕДЕЛЕНИЕ ЗАДАЧ ---
 			await _notifier.SendLogAsync("Этап 3: Распределение задач по Worker'ам...");
 			await _notifier.SendStatusAsync("Распределение задач");
 
-			var distributionTasks = new List<Task>();
+			//var distributionTasks = new List<Task>();
 			int rowsPerWorker = size / activeWorkers.Count;
 			int extraRows = size % activeWorkers.Count;
 			int currentRow = 0;
@@ -71,12 +88,17 @@ public class DistributedJob(
 			{
 				int rowsForThisWorker = rowsPerWorker + (i < extraRows ? 1 : 0);
 				if (rowsForThisWorker == 0) continue;
-				distributionTasks.Add(DistributeAndConfirmAsync(activeWorkers[i], A, b, currentRow, rowsForThisWorker, size));
+
+				// ВЫПОЛНЯЕМ ПОСЛЕДОВАТЕЛЬНО (await внутри цикла)
+				await _notifier.SendLogAsync($"Отправка задачи воркеру {i + 1}/{activeWorkers.Count}...");
+				await DistributeAndConfirmAsync(activeWorkers[i], A, b, currentRow, rowsForThisWorker, size);
+
 				currentRow += rowsForThisWorker;
 			}
-			await Task.WhenAll(distributionTasks);
+			//await Task.WhenAll(distributionTasks);
 			await _notifier.SendLogAsync("Все Worker'ы приняли задачи.");
 
+			// --- ЭТАП 4: ВЫЧИСЛЕНИЯ ---
 			await _notifier.SendStatusAsync("Вычисление");
 			var stopwatch = Stopwatch.StartNew();
 			double[] x = new double[size];
@@ -88,6 +110,8 @@ public class DistributedJob(
 			while (iteration < _maxIterations)
 			{
 				Array.Copy(x, x_old, size);
+
+				// Отправка вектора + режима
 				var vectorPayload = NetworkHelper.ToBytes(x);
 				var fullPayload = new byte[1 + vectorPayload.Length];
 				fullPayload[0] = (byte)_solveMode;
@@ -100,6 +124,7 @@ public class DistributedJob(
 				var receiveTasks = activeWorkers.Select(w => NetworkHelper.ReadMessageAsync(w.GetStream())).ToList();
 				var results = await Task.WhenAll(receiveTasks);
 
+				// Сбор результатов
 				int totalThreadsUsed = 0;
 				currentRow = 0;
 				for (int i = 0; i < activeWorkers.Count; i++)
@@ -108,9 +133,12 @@ public class DistributedJob(
 					if (rowsForThisWorker == 0) continue;
 
 					var payload = results[i].Payload;
+
+					// Читаем кол-во потоков
 					int workerThreads = BitConverter.ToInt32(payload, 0);
 					totalThreadsUsed += workerThreads;
 
+					// Читаем вектор
 					var vectorBytes = new byte[payload.Length - 4];
 					Buffer.BlockCopy(payload, 4, vectorBytes, 0, vectorBytes.Length);
 					var partialResult = NetworkHelper.ToDoubleArray(vectorBytes);
@@ -163,6 +191,7 @@ public class DistributedJob(
 			if (activeWorkers.Count != 0)
 			{
 				_workerPool.ReturnWorkers(activeWorkers);
+				await Task.Delay(100);
 				await _notifier.SendLogAsync($"Worker'ы ({activeWorkers.Count} шт.) возвращены в пул. Доступно: {_workerPool.AvailableCount}.");
 			}
 		}
@@ -170,6 +199,7 @@ public class DistributedJob(
 
 	private async Task DistributeAndConfirmAsync(TcpClient worker, double[,] A, double[] b, int startRow, int rowCount, int matrixSize)
 	{
+		// ... (этот метод без изменений) ...
 		using var ms = new MemoryStream();
 		using var writer = new BinaryWriter(ms);
 		writer.Write(startRow);

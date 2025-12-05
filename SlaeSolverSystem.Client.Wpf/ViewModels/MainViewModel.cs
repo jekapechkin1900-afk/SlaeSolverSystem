@@ -20,10 +20,9 @@ public class MainViewModel : BaseViewModel
 {
 	private readonly MasterApiClient _apiClient;
 	private readonly DispatcherTimer _timer;
-	private readonly IDialogCoordinator _dialogCoordinator; // readonly, так как не меняется
+	private readonly IDialogCoordinator _dialogCoordinator; 
 	private DateTime _startTime;
 
-	// ЕДИНСТВЕННОЕ поле для хранения базового времени (T1)
 	private long _baseTimeT1;
 	private string _lastTestName;
 
@@ -134,7 +133,7 @@ public class MainViewModel : BaseViewModel
 		ClearResultsCommand = new RelayCommand(_ => {
 			TestResults.Clear();
 			LogMessages.Clear();
-			_baseTimeT1 = 0; // Сбрасываем базовое время
+			_baseTimeT1 = 0;
 		}, _ => IsNotRunning);
 
 		StartGaussLinearCommand = new RelayCommand(async _ => await StartTest("Гаусс (линейный)", CommandCodes.StartGaussLinear), _ => CanStart());
@@ -221,7 +220,6 @@ public class MainViewModel : BaseViewModel
 			};
 			AddResultAndFinalize(resultVM);
 
-			// Обработка вектора решения
 			_lastSolutionVector = result.SolutionVector;
 			var sb = new StringBuilder("Первые 10 элементов вектора x:\n");
 			for (int i = 0; i < Math.Min(result.SolutionVector.Length, 10); i++)
@@ -269,9 +267,6 @@ public class MainViewModel : BaseViewModel
 		{
 			await _apiClient.ConnectAsync();
 			await Task.Delay(100);
-			StatusText = "Запрос состояния Worker'ов...";
-			await _apiClient.RequestPoolStateAsync();
-			await Task.Delay(500);
 
 			var confirmationMessage = $"Запустить '{testName}'?\n\nДоступно Worker'ов в пуле: {AvailableWorkers} из {TotalWorkers}.";
 			var dialogResult = await _dialogCoordinator.ShowMessageAsync(this, "Подтверждение запуска", confirmationMessage, MessageDialogStyle.AffirmativeAndNegative);

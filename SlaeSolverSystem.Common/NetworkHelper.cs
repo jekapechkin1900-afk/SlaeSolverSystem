@@ -18,29 +18,30 @@ public static class NetworkHelper
 
 	public static async Task<(byte Command, byte[] Payload)> ReadMessageAsync(NetworkStream stream)
 	{
-		var commandByte = new byte[1];
-		await ReadExactlyAsync(stream, commandByte, 1);
+		var cmdBuffer = new byte[1];
+		await ReadExactlyAsync(stream, cmdBuffer, 1); // 1 байт команды
+		byte cmd = cmdBuffer[0];
 
-		var lengthBytes = new byte[4];
-		await ReadExactlyAsync(stream, lengthBytes, 4);
-		var length = BitConverter.ToInt32(lengthBytes, 0);
+		var lenBuffer = new byte[4];
+		await ReadExactlyAsync(stream, lenBuffer, 4); // 4 байта длины
+		int len = BitConverter.ToInt32(lenBuffer, 0);
 
-		var payload = new byte[length];
-		if (length > 0)
+		var payload = new byte[len];
+		if (len > 0)
 		{
-			await ReadExactlyAsync(stream, payload, length);
+			await ReadExactlyAsync(stream, payload, len);
 		}
 
-		return (commandByte[0], payload);
+		return (cmd, payload);
 	}
 
-	private static async Task ReadExactlyAsync(NetworkStream stream, byte[] buffer, int bytesToRead)
+	private static async Task ReadExactlyAsync(NetworkStream stream, byte[] buffer, int count)
 	{
 		int offset = 0;
-		while (offset < bytesToRead)
+		while (offset < count)
 		{
-			int read = await stream.ReadAsync(buffer, offset, bytesToRead - offset);
-			if (read == 0) throw new EndOfStreamException("Соединение было закрыто.");
+			int read = await stream.ReadAsync(buffer, offset, count - offset);
+			if (read == 0) throw new EndOfStreamException();
 			offset += read;
 		}
 	}

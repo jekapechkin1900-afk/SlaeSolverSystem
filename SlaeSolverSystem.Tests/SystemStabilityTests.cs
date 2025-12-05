@@ -149,7 +149,7 @@ namespace SlaeSolverSystem.Tests
 				CommandCodes.StartSeidelMultiThreadAsync,
 				isDistributed: true,
 				matrixFile, vectorFile, nodesFile,
-				epsilon: 1e-20, 
+				epsilon: -1, 
 				maxIterations: iterations 
 			);
 

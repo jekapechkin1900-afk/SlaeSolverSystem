@@ -15,6 +15,7 @@ public class GuiCommandHandler
 	public GuiCommandHandler(IJobManager jobManager)
 	{
 		_jobManager = jobManager;
+		_jobManager.WorkerPool.PoolStateChanged += OnPoolStateChanged;
 	}
 
 	public void HandleClient(TcpClient client)
@@ -24,7 +25,13 @@ public class GuiCommandHandler
 		_notifier = new GuiNotifier(_guiClient);
 		Console.WriteLine("[GuiCommandHandler] Новый GUI-клиент принят в обработку.");
 		_ = _notifier.SendLogAsync("GUI клиент успешно подключен.");
+		_ = _notifier.SendPoolStateAsync(_jobManager.WorkerPool.AvailableCount, _jobManager.WorkerPool.TotalCount);
 		Task.Run(ListenForCommandsAsync);
+	}
+
+	private void OnPoolStateChanged(int available, int total)
+	{
+		_ = _notifier?.SendPoolStateAsync(available, total);
 	}
 
 	private async Task ListenForCommandsAsync()
